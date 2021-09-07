@@ -33,15 +33,14 @@ log = logging.getLogger("red.core.cogs.StarStreams")
 
 class YouTubeStream():
     token_name = "youtube"
-    
 
     def __init__(self, **kwargs):
         self.id = kwargs.pop("id", None)
         self._token = kwargs.pop("token", None)
         self._config = kwargs.pop("config")
         self.not_livestreams: List[str] = []
-        self.livestreams: List[str] = []
-        self.mention: List[int] = []
+        self.livestreams: List[str] = kwargs.pop("livestreams", [])
+        self.mention: List[int] = kwargs.pop("mention", [])
 
         self._bot = kwargs.pop("_bot")
         self.name = kwargs.pop("name", None)
@@ -97,7 +96,7 @@ class YouTubeStream():
             self.livestreams = list(dict.fromkeys(self.livestreams))
 
         embed_data = None
-        for video_id in self.get_video_ids_from_feed(rssdata):
+        for video_id in set(list(self.get_video_ids_from_feed(rssdata)) + self.livestreams):
             if video_id in self.not_livestreams:
                 log.debug(f"video_id in not_livestreams: {video_id}")
                 continue
@@ -111,7 +110,7 @@ class YouTubeStream():
                 async with session.get(YOUTUBE_VIDEOS_ENDPOINT, params=params) as r:
                     data = await r.json()
                     try:
-                        self._check_api_errors(data)
+                        _check_api_errors(data)
                     except InvalidYoutubeCredentials:
                         log.error("The YouTube API key is either invalid or has not been set.")
                         break
@@ -127,13 +126,12 @@ class YouTubeStream():
                         )
                         continue
                     video_data = data.get("items", [{}])
-                    if len(video_data) == 0:
-                        continue
-                    video_data = video_data[0]
-                    stream_data = video_data.get("liveStreamingDetails", {})
-                    log.debug(f"stream_data for {video_id}: {stream_data}")
+                    if len(video_data) > 0:
+                        stream_data = video_data[0].get("liveStreamingDetails", None)
+                        log.debug(f"stream_data for {video_id}: {stream_data}")
                     if (
-                        stream_data
+                        len(video_data) > 0
+                        and stream_data
                         and stream_data != "None"
                         and stream_data.get("actualEndTime", None) is None
                     ):
@@ -194,7 +192,7 @@ class YouTubeStream():
             async with session.get(YOUTUBE_CHANNELS_ENDPOINT, params=params) as r:
                 data = await r.json()
 
-        self._check_api_errors(data)
+        _check_api_errors(data)
         if "items" in data and len(data["items"]) == 0:
             raise StreamNotFound()
         elif "items" in data:
@@ -206,19 +204,6 @@ class YouTubeStream():
         ):
             raise StreamNotFound()
         raise APIError(r.status, data)
-
-    def _check_api_errors(self, data: dict):
-        if "error" in data:
-            error_code = data["error"]["code"]
-            if error_code == 400 and data["error"]["errors"][0]["reason"] == "keyInvalid":
-                raise InvalidYoutubeCredentials()
-            elif error_code == 403 and data["error"]["errors"][0]["reason"] in (
-                "dailyLimitExceeded",
-                "quotaExceeded",
-                "rateLimitExceeded",
-            ):
-                raise YoutubeQuotaExceeded()
-            raise APIError(error_code, data)
 
     def __repr__(self):
         return "<{0.__class__.__name__}: {0.name} (ID: {0.id})>".format(self)
@@ -233,3 +218,45 @@ class YouTubeStream():
             for child in root.iter("{http://www.w3.org/2005/Atom}entry"):
                 for i in child.iter("{http://www.youtube.com/xml/schemas/2015}videoId"):
                     yield i.text
+
+async def get_video_belong_channel(token, video_id):
+    params = {
+        "key": token["api_key"],
+        "id": video_id,
+        "part": "snippet",
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(YOUTUBE_VIDEOS_ENDPOINT, params=params) as r:
+            data = await r.json()
+            try:
+                _check_api_errors(data)
+            except InvalidYoutubeCredentials:
+                log.error("The YouTube API key is either invalid or has not been set.")
+            except YoutubeQuotaExceeded:
+                log.error("YouTube quota has been exceeded.")
+            except APIError as e:
+                log.error(
+                    "Something went wrong whilst trying to"
+                    " contact the stream service's API.\n"
+                    "Raw response data:\n%r",
+                    e,
+                )
+            else:
+                video_data = data.get("items", [{}])
+                if len(video_data) > 0:
+                    return video_data[0].get("snippet", {}).get("channelId", None)
+            return None
+
+
+def _check_api_errors(data: dict):
+    if "error" in data:
+        error_code = data["error"]["code"]
+        if error_code == 400 and data["error"]["errors"][0]["reason"] == "keyInvalid":
+            raise InvalidYoutubeCredentials()
+        elif error_code == 403 and data["error"]["errors"][0]["reason"] in (
+            "dailyLimitExceeded",
+            "quotaExceeded",
+            "rateLimitExceeded",
+        ):
+            raise YoutubeQuotaExceeded()
+        raise APIError(error_code, data)

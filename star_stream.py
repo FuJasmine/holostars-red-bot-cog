@@ -6,7 +6,7 @@ from redbot.core import checks, commands, Config
 from redbot.core.i18n import cog_i18n, Translator, set_contextual_locales_from_guild
 from redbot.core.utils._internal_utils import send_to_owners_with_prefix_replaced
 from redbot.core.utils.chat_formatting import escape, pagify
-from .youtube_stream import YouTubeStream
+from .youtube_stream import YouTubeStream, get_video_belong_channel
 
 from .errors import (
     APIError,
@@ -331,17 +331,47 @@ class StarStream(commands.Cog):
             )
         await self.save_streams()
 
-    @stars.command(name="stream")
-    async def _stars_stream(self, ctx: commands.Context, yotube_links: str):
-        video_ids = [info[-1] for info in self._youtube_video_re.findall(yotube_links)]
-        videos = list(await self.config.videos())
-        # TODO
+    @stars.group(name="stream")
+    async def _stars_stream(self, ctx: commands.Context):
+        """Mange stream
+        """
+
+    @_stars_stream.command(name="add")
+    async def _stream_add(self, ctx: commands.Context, stream_id: str, chat_channel: discord.TextChannel=None):
+        """ Add stream
+        If not assign **chat channel**, it will set by yotube channel settings.
+        Use: [p]stars stream add [YT stream id] <[chat channel]>
+        """
+        if chat_channel:
+            # TODO
+            pass
+        else:
+            token = await self.bot.get_shared_api_tokens(YouTubeStream.token_name)
+            yt_channel_id = await get_video_belong_channel(token, stream_id)
+            if yt_channel_id:
+                stream = self.get_stream(yt_channel_id)
+                if stream:
+                    if stream_id not in stream.livestreams:
+                        stream.livestreams.append(stream_id)
+                        await self.save_streams()
+                        await ctx.send(f"`{stream_id}` will be alert at `{yt_channel_id}`.")
+                else:
+                    await ctx.send(f"`{yt_channel_id}`` has not set.")
+            else:
+                await ctx.send(f"`{stream_id}`` is not found.")
+
+    @_stars_stream.command(name="check")
+    #TODO: limit time
+    async def _stream_check(self, ctx: commands.Context):
+        """ 
+        
+        """
+        await self.check_streams()
 
     async def _stream_alerts(self):
         await self.bot.wait_until_ready()
         while True:
             await self.check_streams()
-            await self.check_videos()
             await asyncio.sleep(await self.config.refresh_timer())
     
     async def _send_stream_alert(
@@ -503,80 +533,6 @@ class StarStream(commands.Cog):
             for stream in to_remove:
                 self.streams.remove(stream)
             await self.save_streams()
-
-    # TODO
-    async def check_videos(self):
-        pass
-    #     data = {
-    #         864755730677497876: {
-    #             "videos": ["KXTWWhl6PJ4", "iD1Hho1GBjY"],
-    #             "messa ges": []
-    #         }
-    #     }
-    #     for channel_id, channel_info in data.items():
-    #         for video in channel_info["videos"]:
-    #             try:
-    #                 try:
-    #                     embed = None
-    #                     info = {
-    #                         "ch_ids": ["UCNVEsYbiZjH5QLmGeSgTSzg"],
-    #                         "name": ["astel ch.アステル"]
-    #                     }
-    #                     #emself.video_is_online(video)
-    #                 except OfflineStream:
-    #                     if not channel_info["messages"]:
-    #                         continue
-    #                     channel_info["messages"] = ""
-    #                     # TODO: save
-    #                 except APIError as e:
-    #                     log.error(
-    #                         "Something went wrong whilst trying to contact the stream service's API.\n"
-    #                         "Raw response data:\n%r",
-    #                         e,
-    #                     )
-    #                     continue
-    #                 else:
-    #                     if channel_info["messages"]:
-    #                         continue
-    #                     channel = self.bot.get_channel(channel_id)
-    #                     if not channel:
-    #                         continue
-    #                     if await self.bot.cog_disabled_in_guild(self, channel.guild):
-    #                         continue
-    #                     await set_contextual_locales_from_guild(self.bot, channel.guild)
-
-    #                     mention_str, edited_roles = await self._get_mention_str(
-    #                         channel.guild, channel
-    #                     )
-
-    #                     url = youtube_url_format_2.format(video)
-    #                     if mention_str:
-    #                         alert_msg = await self.config.guild(
-    #                             channel.guild
-    #                         ).live_message_mention()
-    #                         if alert_msg:
-    #                             content = alert_msg  # Stop bad things from happening here...
-    #                             content = content.replace("{url}", url)
-    #                             content = content.replace("{mention}", mention_str)
-    #                         else:
-    #                             content = _("{mention}, {display_name} is live!").format(
-    #                                 mention=mention_str,
-    #                                 display_name=info["name"]
-    #                             )
-    #                     else:
-    #                         alert_msg = await self.config.guild(
-    #                             channel.guild
-    #                         ).live_message_nomention()
-    #                         if alert_msg:
-    #                             content = alert_msg  # Stop bad things from happening here...
-    #                             content = content.replace("{url}", url)
-    #                         else:
-    #                             content = _("{display_name} is live!").format(
-    #                                 display_name=info["name"]
-    #                             )
-    #                     await self._send_video_alert(channel, embed, content)
-    #             except Exception as e:
-    #                 log.error("An error has occured with Streams. Please report it.", exc_info=e)
 
     async def video_is_online(self, video):
         pass
