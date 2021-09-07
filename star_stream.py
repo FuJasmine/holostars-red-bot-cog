@@ -23,6 +23,7 @@ import emoji
 import logging
 import asyncio
 import aiohttp
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple, Union, Dict
 
@@ -39,13 +40,12 @@ class StarStream(commands.Cog):
 
     It will check YouTube stream and send notification.
     """
-    youtube_channel_config = "YOUTUBE_CHANNEL"
-    youtube_video_config = "YOUTUBE_VIDEO"
 
     global_defaults = {
         "refresh_timer": 60,
         "tokens": {},
         "streams": [],
+        "videos": [],
     }
 
     guild_defaults = {
@@ -56,23 +56,11 @@ class StarStream(commands.Cog):
         "live_message_nomention": False
     }
 
-    channel_defaults = {
-        "mention": [],
-        "emoji": "",
-    }
-
-    video_defaults = {
-    }
-
     def __init__(self, bot: Red):
         super().__init__()
         self.config: Config = Config.get_conf(self, 27272727)
         self.config.register_global(**self.global_defaults)
         self.config.register_guild(**self.guild_defaults)
-        self.config.init_custom(self.youtube_channel_config, 1)
-        self.config.register_custom(self.youtube_channel_config, **self.channel_defaults)
-        self.config.init_custom(self.youtube_video_config, 1)
-        self.config.register_custom(self.youtube_video_config, **self.channel_defaults)
 
         self.bot: Red = bot
 
@@ -247,45 +235,6 @@ class StarStream(commands.Cog):
                 await delete_stream(stream)
         await self.save_streams()
 
-
-    @_stars_channel.command(name="del", usage="[disable_all=No]")
-    async def _stars_channel_del(self, ctx: commands.Context, _all: bool = False):
-        """Disable all stream alerts in this channel or server.
-
-        `[p]streamalert del` will disable this channel's stream
-        alerts.
-
-        Do `[p]streamalert del yes` to disable all stream alerts in
-        this server.
-        """
-        streams = self.streams.copy()
-        local_channel_ids = [c.id for c in ctx.guild.channels]
-        to_remove = []
-
-        for stream in streams:
-            for channel_id in stream.channels:
-                if channel_id == ctx.channel.id:
-                    stream.channels.remove(channel_id)
-                elif _all and ctx.channel.id in local_channel_ids:
-                    if channel_id in stream.channels:
-                        stream.channels.remove(channel_id)
-
-            if not stream.channels:
-                to_remove.append(stream)
-
-        for stream in to_remove:
-            streams.remove(stream)
-
-        self.streams = streams
-        await self.save_streams()
-
-        if _all:
-            msg = _("All the stream alerts in this server have been disabled.")
-        else:
-            msg = _("All the stream alerts in this channel have been disabled.")
-
-        await ctx.send(msg)
-
     @_stars_channel.command(name="list")
     async def _stars_channel_list(self, ctx: commands.Context):
         """List all active stream alerts in this server."""
@@ -293,18 +242,19 @@ class StarStream(commands.Cog):
         guild_channels_ids = [c.id for c in ctx.guild.channels]
         msg = _("Active alerts:\n\n")
 
-        for stream in self.streams:
-            for channel_id in stream.channels:
-                if channel_id in guild_channels_ids:
-                    streams_list[channel_id].append(stream.name.lower())
-
-        if not streams_list:
+        if len(self.streams) == 0:
             await ctx.send(_("There are no active alerts in this server."))
             return
 
-        for channel_id, streams in streams_list.items():
-            channel = ctx.guild.get_channel(channel_id)
-            msg += "** - #{}**\n{}\n".format(channel, ", ".join(streams))
+        for stream in self.streams:
+            msg += f"**{stream.name}**\n"
+            if stream.mention_channel_id:
+                msg += f" - mention channel: `#{ctx.guild.get_channel(stream.mention_channel_id)}`\n"
+            if stream.chat_channel_id:
+                msg += f" - chat channel: `#{ctx.guild.get_channel(stream.chat_channel_id)}`\n"
+            if len(stream.mention) > 0:
+                roles_str = ', '.join([f'`@{get(ctx.guild.roles, id=role_id).name}`' for role_id in stream.mention])
+                msg += f" - mention roles: {roles_str}\n"
 
         for page in pagify(msg):
             await ctx.send(page)
@@ -354,36 +304,32 @@ class StarStream(commands.Cog):
 
 
     @_stars_channel.command(name="mention")
-    async def _stars_mention(self, ctx: commands.Context, ch_id: str, role: discord.Role):
+    async def _stars_mention(self, ctx: commands.Context, yt_channel_id_or_name: str, role: discord.Role):
         """Set mention role in each channel
-        Use stars mention [channel id] [role]
+        Use stars mention [channel id | channel name] [role]
         """
-        if self.check_name_or_id(ch_id):
-            await ctx.send(
-                _(
-                    "`{ch_id}` is not channel id"
-                ).format(ch_id=ch_id)
-            )
+        stream = self.get_stream(yt_channel_id_or_name)
+        if not stream:
+            await ctx.send(f"`{yt_channel_id_or_name}` is not found")
             return
-        roles = list(await self.config.custom(self.youtube_channel_config, ch_id).mention())
-        if role.id not in roles:
-            roles.append(role.id)
+        if role.id not in stream.mention:
+            stream.mention.append(role.id)
         else:
-            roles.remove(role.id)
+            stream.mention.remove(role.id)
 
-        if len(roles) > 0:
+        if len(stream.mention) > 0:
             await ctx.send(
                 _(
-                    "I will send mention `{roles}`."
-                ).format(roles=", ".join([get(ctx.guild.roles, id=role_id).name for role_id in roles]))
+                    f'I will send mention `{", ".join([get(ctx.guild.roles, id=role_id).name for role_id in stream.mention])}`.'
+                )
             )
         else:
             await ctx.send(
                 _(
-                    "No any mention role in this channel."
+                    "No mention role in this channel."
                 ).format(stream=stream)
             )
-        await self.config.custom(self.youtube_channel_config, ch_id).mention.set(roles)
+        await self.save_streams()
 
     @stars.command(name="stream")
     async def _stars_stream(self, ctx: commands.Context, yotube_links: str):
@@ -652,7 +598,7 @@ class StarStream(commands.Cog):
         can_mention_everyone = channel.permissions_for(guild.me).mention_everyone
         role_ids = []
         for ch_id in ch_ids:
-            role_ids += list(await self.config.custom(self.youtube_channel_config, ch_id).mention())
+            role_ids += self.get_stream(ch_id).mention
         role_ids = list(set(role_ids))
         for role_id in role_ids:
             role =  get(guild.roles, id=role_id)
@@ -698,10 +644,6 @@ class StarStream(commands.Cog):
                 return stream
         return None
     
-def rnd(url):
-    """Appends a random parameter to the url to avoid Discord's caching"""
-    return url + "?rnd=" + "".join([choice(ascii_letters) for _loop_counter in range(6)])
-
 def getTimeType(date_str):
     if date_str == "":
         return datetime.now(timezone.utc)

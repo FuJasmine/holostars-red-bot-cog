@@ -5,6 +5,7 @@ from .errors import (
     OfflineStream,
     InvalidYoutubeCredentials,
     StreamNotFound,
+    StreamsError,
     YoutubeQuotaExceeded,
 )
 from redbot.core.i18n import Translator
@@ -158,6 +159,9 @@ class YouTubeStream():
         channel_title = vid_data["snippet"]["channelTitle"]
         embed = discord.Embed(title=title, url=video_url)
         embed.set_author(name=channel_title)
+        def rnd(url):
+            """Appends a random parameter to the url to avoid Discord's caching"""
+            return url + "?rnd=" + "".join([choice(ascii_letters) for _loop_counter in range(6)])
         embed.set_image(url=rnd(thumbnail))
         embed.colour = 0x9255A5
         info = {}
