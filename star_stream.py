@@ -221,8 +221,8 @@ class StarStream(commands.Cog):
                 ).format(stream=stream)
             )
         if channel_name_or_id_or_all == "all":
-            for stream in self.streams:
-                await delete_stream(stream)
+            while len(self.streams) > 0:
+                await delete_stream(self.streams[0])
         else:
             stream = self.get_stream(channel_name_or_id_or_all)
             if not stream:
@@ -460,10 +460,11 @@ class StarStream(commands.Cog):
                     # alert_msg = await self.config.guild(channel.guild).live_message_mention()
                     changed = False
                     if scheduled_data:
-                        video_id = YouTubeStream.get_info(scheduled_data)["video_id"]
+                        info = YouTubeStream.get_info(scheduled_data)
+                        video_id = info["video_id"]
                         if stream.chat_channel_id and video_id not in stream.scheduled_sent:
-                            await self.send_alert(
-                                scheduled_data, stream.mention_channel_id, is_mention=True, embed=True, content="{time} {url}"
+                            await self.send_scheduled(
+                                stream.mention_channel_id, info
                             )
                             stream.scheduled_sent.append(video_id)
                             changed = True
@@ -471,11 +472,11 @@ class StarStream(commands.Cog):
                         video_id = YouTubeStream.get_info(streaming_data)["video_id"]
                         if video_id not in stream.streaming_sent:
                             if stream.mention_channel_id:
-                                await self.send_alert(
+                                await self.send_streaming(
                                     streaming_data, stream.mention_channel_id, is_mention=True, embed=True
                                 )
                             if stream.chat_channel_id:
-                                await self.send_alert(
+                                await self.send_streaming(
                                     streaming_data, stream.chat_channel_id, is_mention=False, embed=False
                                 )
                             stream.streaming_sent.append(video_id)
@@ -490,7 +491,7 @@ class StarStream(commands.Cog):
                 self.streams.remove(stream)
             await self.save_streams()
 
-    async def send_alert(self, data, channel_id, is_mention, content=None, embed=False):
+    async def send_streaming(self, data, channel_id, is_mention, content=None, embed=False, description=None):
         embed = YouTubeStream.make_embed(data) if embed else None
         info = YouTubeStream.get_info(data)
         channel = self.bot.get_channel(channel_id)
@@ -505,13 +506,32 @@ class StarStream(commands.Cog):
         )) if is_mention else ("", [])
         
         url = youtube_url_format_2.format(info["video_id"])
-        if not content:
-            content = "{mention}, {channel_name} is live!" if mention_str != "" else "{channel_name} is live!"
+        content = "{mention}, {channel_name} is live!" if mention_str != "" else "{channel_name} is live!"
         content = content.replace("{title}", info["title"])
         content = content.replace("{channel_name}", info["channel_name"])
         content = content.replace("{url}", url)
         content = content.replace("{mention}", mention_str)
+        content = content.replace("{description}", description if description else info["title"])
         await self._send_stream_alert(channel, embed, content)
+
+    async def send_scheduled(self, channel_id, info=None, content=None, description=None):
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+        if await self.bot.cog_disabled_in_guild(self, channel.guild):
+            return
+        await set_contextual_locales_from_guild(self.bot, channel.guild)
+
+        url = youtube_url_format_2.format(info["video_id"])
+        if not content:
+            content = "{time}\n{description}\n{url}"
+        content = content.replace("{title}", info["title"])
+        content = content.replace("{channel_name}", info["channel_name"])
+        content = content.replace("{url}", url)
+        content = content.replace("{description}", description if description else info["title"])
+        if info["time"]:
+            content = content.replace("{time}", getDiscordTimeStamp(info["time"]))
+        await self._send_stream_alert(channel, None, content)
     
     async def video_is_online(self, video):
         pass
@@ -585,4 +605,4 @@ def getTimeType(date_str):
     return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%SZ')
 
 def getDiscordTimeStamp(date):
-    return "<t:{}:f>".format(int(time.mktime(d.timetuple()))-time.timezone)
+    return "<t:{}:f>".format(int(time.mktime(date.timetuple()))-time.timezone)

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from string import ascii_letters
 import xml.etree.ElementTree as ET
 from typing import Optional, List, Tuple
+from dateutil.parser import parse as parse_time
 
 YOUTUBE_BASE_URL = "https://www.googleapis.com/youtube/v3"
 YOUTUBE_CHANNELS_ENDPOINT = YOUTUBE_BASE_URL + "/channels"
@@ -46,6 +47,8 @@ class YouTubeStream():
         self.name = kwargs.pop("name", None)
         # self.already_online = kwargs.pop("already_online", False)
         self.messages = kwargs.pop("messages", [])
+        self.scheduled_sent = kwargs.pop("scheduled_sent", [])
+        self.streaming_sent = kwargs.pop("streaming_sent", [])
         self.chat_channel_id = kwargs.pop("chat_channel_id", None)
         self.mention_channel_id = kwargs.pop("mention_channel_id", None)
         self.emoji = kwargs.pop("emoji", None)
@@ -95,7 +98,8 @@ class YouTubeStream():
         if self.livestreams:
             self.livestreams = list(dict.fromkeys(self.livestreams))
 
-        embed_data = None
+        streaming_data = None
+        scheduled_data = None
         for video_id in set(list(self.get_video_ids_from_feed(rssdata)) + self.livestreams):
             if video_id in self.not_livestreams:
                 log.debug(f"video_id in not_livestreams: {video_id}")
@@ -135,43 +139,49 @@ class YouTubeStream():
                         and stream_data != "None"
                         and stream_data.get("actualEndTime", None) is None
                     ):
+                        scheduled = stream_data.get("scheduledStartTime", None)
                         if stream_data.get("actualStartTime", None) is not None:
                             if video_id not in self.livestreams:
                                 self.livestreams.append(video_id)
-                            embed_data = data
+                            streaming_data = data
+                        elif (parse_time(scheduled) - datetime.now(timezone.utc)).total_seconds() < 3600:
+                            scheduled_data = data
                     else:
                         self.not_livestreams.append(video_id)
                         if video_id in self.livestreams:
                             self.livestreams.remove(video_id)
-        if embed_data is not None:
-            return await self.make_embed(embed_data)
-        log.debug(f"livestreams for {self.name}: {self.livestreams}")
-        log.debug(f"not_livestreams for {self.name}: {self.not_livestreams}")
+        if not scheduled_data or not streaming_data:
+            return scheduled_data, streaming_data
+            # return await self.make_embed(embed_data)
         raise OfflineStream()
 
-    async def make_embed(self, data):
+    @classmethod
+    def make_embed(self, data):
         vid_data = data["items"][0]
         video_url = youtube_url_format_1.format(vid_data["id"])
         title = vid_data["snippet"]["title"]
         thumbnail = vid_data["snippet"]["thumbnails"]["medium"]["url"]
-        channel_title = vid_data["snippet"]["channelTitle"]
+        # channel_title = vid_data["snippet"]["channelTitle"]
         embed = discord.Embed(title=title, url=video_url)
-        embed.set_author(name=channel_title)
+        embed.set_author(name=vid_data["snippet"]["channelTitle"])
         def rnd(url):
             """Appends a random parameter to the url to avoid Discord's caching"""
             return url + "?rnd=" + "".join([choice(ascii_letters) for _loop_counter in range(6)])
         embed.set_image(url=rnd(thumbnail))
         embed.colour = 0x9255A5
-        info = {}
-        info["video_id"] = vid_data["id"]
-        info["title"] = vid_data["snippet"]["channelTitle"]
-        info["channel_id"] = vid_data["snippet"]["channelId"]
-        def getTimeType(date_str):
-            if date_str == "":
-                return datetime.now(timezone.utc)
-            return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%SZ')
-        info["time"] = getTimeType(vid_data.get("liveStreamingDetails", {}).get("scheduledStartTime", ""))
-        return embed, info
+        return embed
+
+    @classmethod
+    def get_info(self, data):
+        vid_data = data["items"][0]
+        time = vid_data.get("liveStreamingDetails", {}).get("scheduledStartTime", None)
+        return {
+            "video_id": vid_data["id"],
+            "channel_name": vid_data["snippet"]["channelTitle"],
+            "title": vid_data["snippet"]["channelTitle"],
+            "channel_id": vid_data["snippet"]["channelId"],
+            "time": parse_time(time) if time else None
+        }
 
     async def fetch_id(self):
         return await self._fetch_channel_resource("id")
