@@ -376,7 +376,6 @@ class StarStream(commands.Cog):
     
     async def _send_stream_alert(
         self,
-        stream,
         channel: discord.TextChannel,
         embed: discord.Embed,
         content: str = None,
@@ -403,8 +402,6 @@ class StarStream(commands.Cog):
                         allowed_mentions=discord.AllowedMentions(roles=True, everyone=True),
                     )
                     time.sleep(3)
-        message_data = {"guild": m.guild.id, "channel": m.channel.id, "message": m.id}
-        stream.messages.append(message_data)
     
     async def _send_video_alert(
         self,
@@ -443,7 +440,7 @@ class StarStream(commands.Cog):
         for stream in self.streams:
             try:
                 try:
-                    embed, info = await stream.is_online()
+                    scheduled_data, streaming_data = await stream.is_online()
                 except StreamNotFound:
                     log.info("Stream with name %s no longer exists", stream.name)
                     continue
@@ -460,72 +457,31 @@ class StarStream(commands.Cog):
                     )
                     continue
                 else:
-                    if stream.messages:
-                        continue
-                    async def send_alert(channel_id, is_mention):
-                        channel = self.bot.get_channel(channel_id)
-                        if not channel:
-                            return
-                        if await self.bot.cog_disabled_in_guild(self, channel.guild):
-                            return
-                        await set_contextual_locales_from_guild(self.bot, channel.guild)
-
-                        mention_str, edited_roles = (await self._get_mention_str(
-                            channel.guild, channel, [info["channel_id"]]
-                        )) if is_mention else ("", [])
-                        
-                        url = youtube_url_format_2.format(info["video_id"])
-                        if mention_str:
-                            alert_msg = await self.config.guild(
-                                channel.guild
-                            ).live_message_mention()
-                            if alert_msg:
-                                content = alert_msg  # Stop bad things from happening here...
-                                content = content.replace(
-                                    "{stream.name}", str(stream.name)
-                                )  # Backwards compatibility
-                                content = content.replace(
-                                    "{stream.display_name}", str(stream.display_name)
+                    # alert_msg = await self.config.guild(channel.guild).live_message_mention()
+                    changed = False
+                    if scheduled_data:
+                        video_id = YouTubeStream.get_info(scheduled_data)["video_id"]
+                        if stream.chat_channel_id and video_id not in stream.scheduled_sent:
+                            await self.send_alert(
+                                scheduled_data, stream.mention_channel_id, is_mention=True, embed=True, content="{time} {url}"
+                            )
+                            stream.scheduled_sent.append(video_id)
+                            changed = True
+                    if streaming_data:
+                        video_id = YouTubeStream.get_info(streaming_data)["video_id"]
+                        if video_id not in stream.streaming_sent:
+                            if stream.mention_channel_id:
+                                await self.send_alert(
+                                    streaming_data, stream.mention_channel_id, is_mention=True, embed=True
                                 )
-                                content = content.replace("{stream}", str(stream.name))
-                                content = content.replace("{url}", url)
-                                content = content.replace("{mention}", mention_str)
-                            else:
-                                content = _("{mention}, {display_name} is live!").format(
-                                    mention=mention_str,
-                                    display_name=escape(
-                                        str(stream.display_name),
-                                        mass_mentions=True,
-                                        formatting=True,
-                                    ),
+                            if stream.chat_channel_id:
+                                await self.send_alert(
+                                    streaming_data, stream.chat_channel_id, is_mention=False, embed=False
                                 )
-                        else:
-                            alert_msg = await self.config.guild(
-                                channel.guild
-                            ).live_message_nomention()
-                            if alert_msg:
-                                content = alert_msg  # Stop bad things from happening here...
-                                content = content.replace(
-                                    "{stream.name}", str(stream.name)
-                                )  # Backwards compatibility
-                                content = content.replace(
-                                    "{stream.display_name}", str(stream.display_name)
-                                )
-                                content = content.replace("{stream}", str(stream.name))
-                                content = content.replace("{url}", url)
-                            else:
-                                content = _("{display_name} is live!").format(
-                                    display_name=escape(
-                                        str(stream.display_name),
-                                        mass_mentions=True,
-                                        formatting=True,
-                                    )
-                                )
-                        await self._send_stream_alert(stream, channel, embed, content)
-                    if stream.mention_channel_id:
-                        await send_alert(stream.mention_channel_id, True)
-                    if stream.chat_channel_id:
-                        await send_alert(stream.chat_channel_id, False)
+                            stream.streaming_sent.append(video_id)
+                            changed = True
+                    if changed:
+                        await self.save_streams()
             except Exception as e:
                 log.error("An error has occured with Streams. Please report it.", exc_info=e)
 
@@ -534,6 +490,29 @@ class StarStream(commands.Cog):
                 self.streams.remove(stream)
             await self.save_streams()
 
+    async def send_alert(self, data, channel_id, is_mention, content=None, embed=False):
+        embed = YouTubeStream.make_embed(data) if embed else None
+        info = YouTubeStream.get_info(data)
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+        if await self.bot.cog_disabled_in_guild(self, channel.guild):
+            return
+        await set_contextual_locales_from_guild(self.bot, channel.guild)
+
+        mention_str, edited_roles = (await self._get_mention_str(
+            channel.guild, channel, [info["channel_id"]]
+        )) if is_mention else ("", [])
+        
+        url = youtube_url_format_2.format(info["video_id"])
+        if not content:
+            content = "{mention}, {channel_name} is live!" if mention_str != "" else "{channel_name} is live!"
+        content = content.replace("{title}", info["title"])
+        content = content.replace("{channel_name}", info["channel_name"])
+        content = content.replace("{url}", url)
+        content = content.replace("{mention}", mention_str)
+        await self._send_stream_alert(channel, embed, content)
+    
     async def video_is_online(self, video):
         pass
 
