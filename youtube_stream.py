@@ -144,7 +144,7 @@ class YouTubeStream():
                             if video_id not in self.livestreams:
                                 self.livestreams.append(video_id)
                             streaming_data = data
-                        elif (parse_time(scheduled) - datetime.now(timezone.utc)).total_seconds() < 3600:
+                        elif (parse_time(scheduled) - datetime.now(timezone.utc)).total_seconds() < 36000:
                             scheduled_data = data
                     else:
                         self.not_livestreams.append(video_id)
@@ -178,7 +178,7 @@ class YouTubeStream():
         return {
             "video_id": vid_data["id"],
             "channel_name": vid_data["snippet"]["channelTitle"],
-            "title": vid_data["snippet"]["channelTitle"],
+            "title": vid_data["snippet"]["title"],
             "channel_id": vid_data["snippet"]["channelId"],
             "time": parse_time(time) if time else None
         }

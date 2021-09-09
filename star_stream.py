@@ -29,7 +29,7 @@ from typing import Optional, List, Tuple, Union, Dict
 
 _ = Translator("StarStreams", __file__)
 log = logging.getLogger("red.core.cogs.StarStreams")
-new_line = r'{new_line}'
+next_message = r'{next_message}'
 
 youtube_url_format_2 = "https://www.youtube.com/watch?v={}"
 youtube_url_format_3 = "https://youtu.be/{}"
@@ -52,8 +52,9 @@ class StarStream(commands.Cog):
         "autodelete": False,
         "mention_everyone": False,
         "mention_here": False,
-        "live_message_mention": False,
-        "live_message_nomention": False
+        "chat_message": None,
+        "mention_message": None,
+        "scheduled_message": None,
     }
 
     def __init__(self, bot: Red):
@@ -387,21 +388,21 @@ class StarStream(commands.Cog):
                 allowed_mentions=discord.AllowedMentions(roles=True, everyone=True),
             )
         else:
-            content = content.split(new_line)
-            if len(content) == 1:
+            content = content.split(next_message)
+            m = await channel.send(
+                content[0],
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(roles=True, everyone=True),
+            )
+            ms = [m]
+            for i in range(1, len(content)):
+                time.sleep(2)
                 m = await channel.send(
-                    content[0],
-                    embed=embed,
+                    content[i],
                     allowed_mentions=discord.AllowedMentions(roles=True, everyone=True),
                 )
-            else:
-                for c in content:
-                    m = await channel.send(
-                        c,
-                        # embed=embed,
-                        allowed_mentions=discord.AllowedMentions(roles=True, everyone=True),
-                    )
-                    time.sleep(3)
+                ms.append(m)
+            return ms
     
     async def _send_video_alert(
         self,
@@ -434,6 +435,30 @@ class StarStream(commands.Cog):
         # TODO: message_data = {"guild": m.guild.id, "channel": m.channel.id, "message": m.id}
         # stream.messages.append(message_data)
 
+    @stars.group()
+    @commands.guild_only()
+    async def message(self, ctx: commands.Context):
+        """Manage custom messages for stream alerts."""
+        pass
+
+    @message.command(name='chat')
+    async def _message_chat(self, ctx: commands.Context, *, message: str):
+        guild = ctx.guild
+        await self.config.guild(guild).chat_message.set(message)
+        await ctx.send(_("Stream alert message set!"))
+
+    @message.command(name='mention')
+    async def _message_mention(self, ctx: commands.Context, *, message: str):
+        guild = ctx.guild
+        await self.config.guild(guild).mention_message.set(message)
+        await ctx.send(_("Stream alert message set!"))
+
+    @message.command(name='schduled')
+    async def _message_schduled(self, ctx: commands.Context, *, message: str):
+        guild = ctx.guild
+        await self.config.guild(guild).scheduled_message.set(message)
+        await ctx.send(_("Stream alert message set!"))
+
     async def check_streams(self):
         # TODO: continue when video in video
         to_remove = []
@@ -463,8 +488,10 @@ class StarStream(commands.Cog):
                         info = YouTubeStream.get_info(scheduled_data)
                         video_id = info["video_id"]
                         if stream.chat_channel_id and video_id not in stream.scheduled_sent:
+                            channel = self.bot.get_channel(stream.chat_channel_id)
+                            content = await self.config.guild(channel.guild).scheduled_message()
                             await self.send_scheduled(
-                                stream.mention_channel_id, info
+                                stream.mention_channel_id, info, pin=True, content=content
                             )
                             stream.scheduled_sent.append(video_id)
                             changed = True
@@ -472,12 +499,21 @@ class StarStream(commands.Cog):
                         video_id = YouTubeStream.get_info(streaming_data)["video_id"]
                         if video_id not in stream.streaming_sent:
                             if stream.mention_channel_id:
+                                channel = self.bot.get_channel(stream.mention_channel_id)
+                                content = await self.config.guild(channel.guild).mention_message()
                                 await self.send_streaming(
-                                    streaming_data, stream.mention_channel_id, is_mention=True, embed=True
+                                    streaming_data, stream.mention_channel_id, 
+                                    is_mention=True, embed=True, 
+                                    chat_channel_id=stream.chat_channel_id, 
+                                    content=content # "{channel_name} is live! {chat_channel}"
                                 )
                             if stream.chat_channel_id:
+                                channel = self.bot.get_channel(stream.chat_channel_id)
+                                content = await self.config.guild(channel.guild).chat_message()
                                 await self.send_streaming(
-                                    streaming_data, stream.chat_channel_id, is_mention=False, embed=False
+                                    streaming_data, stream.chat_channel_id,
+                                    is_mention=False, embed=False, 
+                                    content=content
                                 )
                             stream.streaming_sent.append(video_id)
                             changed = True
@@ -491,7 +527,10 @@ class StarStream(commands.Cog):
                 self.streams.remove(stream)
             await self.save_streams()
 
-    async def send_streaming(self, data, channel_id, is_mention, content=None, embed=False, description=None):
+    async def send_streaming(
+        self, data, channel_id, is_mention, content=None
+        , embed=False, description=None, pin=False, chat_channel_id=None
+        ):
         embed = YouTubeStream.make_embed(data) if embed else None
         info = YouTubeStream.get_info(data)
         channel = self.bot.get_channel(channel_id)
@@ -506,15 +545,22 @@ class StarStream(commands.Cog):
         )) if is_mention else ("", [])
         
         url = youtube_url_format_2.format(info["video_id"])
-        content = "{mention}, {channel_name} is live!" if mention_str != "" else "{channel_name} is live!"
-        content = content.replace("{title}", info["title"])
+        if not content:
+            content = content.replace("{title}", info["title"])
         content = content.replace("{channel_name}", info["channel_name"])
         content = content.replace("{url}", url)
         content = content.replace("{mention}", mention_str)
         content = content.replace("{description}", description if description else info["title"])
-        await self._send_stream_alert(channel, embed, content)
+        content = content.replace("{new_line}", "\n")
+        if chat_channel_id:
+            chat_channel = self.bot.get_channel(chat_channel_id)
+            if chat_channel:
+                content = content.replace("{chat_channel}", chat_channel.mention)
+        ms = await self._send_stream_alert(channel, embed, content)
+        if pin:
+            await ms[0].pin()
 
-    async def send_scheduled(self, channel_id, info=None, content=None, description=None):
+    async def send_scheduled(self, channel_id, info=None, content=None, description=None, pin=False):
         channel = self.bot.get_channel(channel_id)
         if not channel:
             return
@@ -531,7 +577,9 @@ class StarStream(commands.Cog):
         content = content.replace("{description}", description if description else info["title"])
         if info["time"]:
             content = content.replace("{time}", getDiscordTimeStamp(info["time"]))
-        await self._send_stream_alert(channel, None, content)
+        ms = await self._send_stream_alert(channel, None, content)
+        if pin:
+            await ms[0].pin()
     
     async def video_is_online(self, video):
         pass
