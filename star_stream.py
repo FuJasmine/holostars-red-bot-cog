@@ -453,7 +453,7 @@ class StarStream(commands.Cog):
         await self.config.guild(guild).mention_message.set(message)
         await ctx.send(_("Stream alert message set!"))
 
-    @message.command(name='schduled')
+    @message.command(name='scheduled')
     async def _message_schduled(self, ctx: commands.Context, *, message: str):
         guild = ctx.guild
         await self.config.guild(guild).scheduled_message.set(message)
