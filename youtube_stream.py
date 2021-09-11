@@ -54,10 +54,6 @@ class YouTubeStream():
         self.emoji = kwargs.pop("emoji", None)
         self.type = self.__class__.__name__
 
-    @property
-    def display_name(self) -> Optional[str]:
-        return self.name
-
     async def check_exists(self):
         try:
             await self.is_online()
@@ -145,12 +141,13 @@ class YouTubeStream():
                                 self.livestreams.append(video_id)
                             streaming_data = data
                         elif (parse_time(scheduled) - datetime.now(timezone.utc)).total_seconds() < 36000:
-                            scheduled_data = data
+                            if not scheduled_data or parse_time(scheduled) < parse_time(scheduled_data.time):
+                                scheduled_data = data
                     else:
                         self.not_livestreams.append(video_id)
                         if video_id in self.livestreams:
                             self.livestreams.remove(video_id)
-        if not scheduled_data or not streaming_data:
+        if scheduled_data or streaming_data:
             return scheduled_data, streaming_data
             # return await self.make_embed(embed_data)
         raise OfflineStream()
