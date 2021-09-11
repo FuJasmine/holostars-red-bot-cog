@@ -441,7 +441,6 @@ class StarStream(commands.Cog):
             self.scheduled_streams.append(scheduled_stream)
             await ctx.send(f"#{chat_channel.name} 已設置直播，直播者有：{', '.join(scheduled_stream.channel_names)}")
             await self.save_scheduled_streams()
-        
 
     @_stars_stream.command(name="add")
     async def _stream_add(self, ctx: commands.Context, video_id: str, chat_channel: discord.TextChannel=None):
@@ -463,19 +462,19 @@ class StarStream(commands.Cog):
         else:
             await ctx.send(f"沒有找到 `{video_id}`.")
 
-        if chat_channel and chat_channel.id != scheduled_stream.text_channel_id:
+        if chat_channel:
             scheduled_stream = self.get_scheduled_stream(text_channel_id=chat_channel.id)
-            if sceduled_stream:
-                if stream.id in sceduled_stream.channel_ids:
-                    idx = sceduled_stream.channel_ids.index(stream.id)
-                    sceduled_stream.video_ids[idx] = video_id
+            if scheduled_stream:
+                if stream.id in scheduled_stream.channel_ids:
+                    idx = scheduled_stream.channel_ids.index(stream.id)
+                    scheduled_stream.video_ids[idx] = video_id
                 else:
                     await ctx.send(f"{chat_channel}` 沒有設定這個頻道")
             else:
                 await ctx.send(f"{chat_channel}` 沒有設定的直播")
 
     @_stars_stream.command(name="resend")
-    async def _stream_add(self, ctx: commands.Context, video_id: str):
+    async def _stream_resend (self, ctx: commands.Context, video_id: str):
         """ 重新發送通知
         不管之前是否發送過訊息，當下次偵測的時候，會重新發送通知
         """
