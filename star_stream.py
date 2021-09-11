@@ -374,13 +374,16 @@ class StarStream(commands.Cog):
             return
     
     @_stars_stream.command(name="set")
-    async def _stream_set(self, ctx: commands.Context, chat_channel: discord.TextChannel, stream_time: str, description=None):
+    async def _stream_set(self, ctx: commands.Context
+    , chat_channel: discord.TextChannel, stream_time: str
+    , description=None, change_channel_name: bool=True):
         token = await self.bot.get_shared_api_tokens(YouTubeStream.token_name)
         scheduled_stream = ScheduledStream(
             _bot=self.bot, token=token, config=self.config,
             text_channel_id=chat_channel.id,
             description=description,
             time=datetime_plus_8_to_0_isoformat(stream_time),
+            change_channel_name=change_channel_name
         )
         message = await ctx.send("test")
         emojis = {
@@ -408,35 +411,42 @@ class StarStream(commands.Cog):
         task = asyncio.create_task(add_reaction())
         # # await add_reaction()
         try:
-            while True:
-                (r, u) = await self.bot.wait_for(
-                    "reaction_add",
-                    check=ReactionPredicate.with_emojis(emojis_list, message, ctx.author),
-                    timeout=30.0,
-                )
-                if emojis[r.emoji] == "Done":
-                    selected = {k: v for k, v in selected.items() if v}
-                    break 
-                elif emojis[r.emoji] == "Cancel":
-                    selected = {}
-                    break
-                else:
-                    selected[r.emoji] = not selected[r.emoji]
+            async def reaction_task(event):
+                nonlocal selected
+                while True:
+                    r, u = await self.bot.wait_for(
+                    event, check=ReactionPredicate.with_emojis(emojis_list, message, ctx.author)
+                    )
+                    if emojis[r.emoji] == "Done":
+                        break 
+                    elif emojis[r.emoji] == "Cancel":
+                        selected = {}
+                        break
+                    else:
+                        selected[r.emoji] = not selected[r.emoji]
+            tasks = [
+                asyncio.create_task(reaction_task('reaction_remove')), 
+                asyncio.create_task(reaction_task('reaction_add'))
+            ]
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED, timeout=30)
+            for task in tasks:
+                if task is not None:
+                    task.cancel()
         except asyncio.TimeoutError:
             pass
         await self._clear_react(message, emojis_list)
 
         if task is not None:
             task.cancel()
-        
+
+        selected = {k: v for k, v in selected.items() if v}
         for emoji in selected.keys():
             stream = emojis[emoji]
             scheduled_stream.add_collab(stream.id, stream.name)
         
         if selected != {}:
-            old_scheduled_stream = self.get_scheduled_stream(text_channel_id=chat_channel.id)
-            if old_scheduled_stream:
-                # log.info(old_scheduled_stream)
+            for old_scheduled_stream in {v for v in self.scheduled_streams if scheduled_stream.text_channel_id == chat_channel.id}:
+                log.info(old_scheduled_stream)
                 self.scheduled_streams.remove(old_scheduled_stream)
             self.scheduled_streams.append(scheduled_stream)
             await ctx.send(f"#{chat_channel.name} 已設置直播，直播者有：{', '.join(scheduled_stream.channel_names)}")
@@ -809,9 +819,10 @@ class StarStream(commands.Cog):
             content = content.replace("{url}", url)
 
             # 改頻道名稱
-            emojis = [self.getEmoji(channel, stream.emoji) for stream in self.streams if stream.id in scheduled_stream.channel_ids]
-            emojis = [f'{e}' for e in emojis if e]
-            await channel.edit(name=f"連動頻道{''.join(emojis)}")
+            if scheduled_stream.change_channel_name:
+                emojis = [self.getEmoji(channel, stream.emoji) for stream in self.streams if stream.id in scheduled_stream.channel_ids]
+                emojis = [f'{e}' for e in emojis if e]
+                await channel.edit(name=f"連動頻道{''.join(emojis)}")
         else:
             content = content.replace("{channel_name}", info["channel_name"])
             content = content.replace("{description}", info["title"])

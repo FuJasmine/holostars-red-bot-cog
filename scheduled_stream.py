@@ -45,6 +45,7 @@ class ScheduledStream():
         self.time = kwargs.pop("time", None)
         self.message_id = kwargs.pop("message_id", None)
         self.streaming_sent = kwargs.pop("streaming_sent", False)
+        self.change_channel_name = kwargs.pop("change_channel_name", True)
         self._token = kwargs.pop("token", None)
         self._config = kwargs.pop("config")
         self._bot = kwargs.pop("_bot")
