@@ -141,7 +141,7 @@ class YouTubeStream():
                                 self.livestreams.append(video_id)
                             streaming_data = data
                         elif (parse_time(scheduled) - datetime.now(timezone.utc)).total_seconds() < 36000:
-                            if not scheduled_data or parse_time(scheduled) < parse_time(scheduled_data.time):
+                            if not scheduled_data or parse_time(scheduled) < self.get_info(scheduled_data)["time"]:
                                 scheduled_data = data
                     else:
                         self.not_livestreams.append(video_id)

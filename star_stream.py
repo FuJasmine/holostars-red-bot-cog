@@ -60,6 +60,7 @@ class StarStream(commands.Cog):
         "chat_message": None,
         "mention_message": None,
         "scheduled_message": None,
+        "collab_mention_message": None,
     }
 
     def __init__(self, bot: Red):
@@ -132,18 +133,19 @@ class StarStream(commands.Cog):
         Use: [p]stars channel set [YT channel id | YT channel name] [mention channel] [default chat channel] [emoji]
         """
         # if str(_emoji) == emoji for _emoji in message.guild.emojis:
-        def get_emoji_name(word):
-            if word in emoji.UNICODE_EMOJI['en']:
-                return word
-            elif word in [str(e) for e in ctx.guild.emojis]:
-                for e in ctx.guild.emojis:
-                    if word == str(e):
-                        return e.name
-            return None
-        channel_emoji = self.get_emoji_name(channel_emoji)
-        if not channel_emoji:
-            await ctx.send("Emoji is not corrent")
-            return
+        if channel_emoji:
+            def get_emoji_name(word):
+                if word in emoji.UNICODE_EMOJI['en']:
+                    return word
+                elif word in [str(e) for e in ctx.guild.emojis]:
+                    for e in ctx.guild.emojis:
+                        if word == str(e):
+                            return e.name
+                return None
+            channel_emoji = get_emoji_name(channel_emoji)
+            if not channel_emoji:
+                await ctx.send("Emoji is not corrent")
+                return
         stream = self.get_stream(channel_name_or_id)
         chat_channel_id=chat_channel.id if chat_channel else None
         mention_channel_id=mention_channel.id if mention_channel else None
@@ -271,8 +273,6 @@ class StarStream(commands.Cog):
                 msg += f" - mention roles: {roles_str}\n"
             if stream.emoji:
                 emoji = self.getEmoji(ctx, stream.emoji)
-                # if instance(emoji) == Discord.Emoji:
-                #     emoji = f"<:emoji_name:emoji_id>"
                 msg += f" - representative emoji: {emoji}\n"
 
         for page in pagify(msg):
@@ -398,7 +398,7 @@ class StarStream(commands.Cog):
             emojis[new_emoji] = stream
             selected[new_emoji] = False
         emojis_list = list(emojis.keys())
-        log.info(emojis.keys())
+        # log.info(emojis.keys())
 
         async def add_reaction():
             with contextlib.suppress(discord.NotFound):
@@ -434,8 +434,9 @@ class StarStream(commands.Cog):
             scheduled_stream.add_collab(stream.id, stream.name)
         
         if selected != {}:
-            old_scheduled_stream = self.get_scheduled_stream(chat_channel.id)
+            old_scheduled_stream = self.get_scheduled_stream(text_channel_id=chat_channel.id)
             if old_scheduled_stream:
+                # log.info(old_scheduled_stream)
                 self.scheduled_streams.remove(old_scheduled_stream)
             self.scheduled_streams.append(scheduled_stream)
             await ctx.send(f"#{chat_channel.name} 已設置直播，直播者有：{', '.join(scheduled_stream.channel_names)}")
@@ -443,36 +444,66 @@ class StarStream(commands.Cog):
         
 
     @_stars_stream.command(name="add")
-    async def _stream_add(self, ctx: commands.Context, stream_id: str, chat_channel: discord.TextChannel=None):
+    async def _stream_add(self, ctx: commands.Context, video_id: str, chat_channel: discord.TextChannel=None):
         """ Add stream
         If not assign **chat channel**, it will set by yotube channel settings.
-        Use: [p]stars stream add [YT stream id] <[chat channel]>
+        Use: [p]stars stream add [YT video id] <[chat channel]>
         """
-        if chat_channel:
-            # TODO
-            pass
-        else:
-            token = await self.bot.get_shared_api_tokens(YouTubeStream.token_name)
-            yt_channel_id = await get_video_belong_channel(token, stream_id)
-            if yt_channel_id:
-                stream = self.get_stream(yt_channel_id)
-                if stream:
-                    if stream_id not in stream.livestreams:
-                        stream.livestreams.append(stream_id)
-                        await self.save_streams()
-                        await ctx.send(f"`{stream_id}` will be alert at `{yt_channel_id}`.")
-                else:
-                    await ctx.send(f"`{yt_channel_id}`` has not set.")
+        token = await self.bot.get_shared_api_tokens(YouTubeStream.token_name)
+        yt_channel_id = await get_video_belong_channel(token, video_id)
+        if yt_channel_id:
+            stream = self.get_stream(yt_channel_id)
+            if stream:
+                if video_id not in stream.livestreams:
+                    stream.livestreams.append(video_id)
+                    await self.save_streams()
+                await ctx.send(f"新增 {video_id}` 到 {stream.name}` 追蹤的直播，開播將會通知")
             else:
-                await ctx.send(f"`{stream_id}`` is not found.")
+                await ctx.send(f"沒有設置 `{yt_channel_id}` 的頻道")
+        else:
+            await ctx.send(f"沒有找到 `{video_id}`.")
 
-    @_stars_stream.command(name="check")
+        if chat_channel and chat_channel.id != scheduled_stream.text_channel_id:
+            scheduled_stream = self.get_scheduled_stream(text_channel_id=chat_channel.id)
+            if sceduled_stream:
+                if stream.id in sceduled_stream.channel_ids:
+                    idx = sceduled_stream.channel_ids.index(stream.id)
+                    sceduled_stream.video_ids[idx] = video_id
+                else:
+                    await ctx.send(f"{chat_channel}` 沒有設定這個頻道")
+            else:
+                await ctx.send(f"{chat_channel}` 沒有設定的直播")
+
+    @_stars_stream.command(name="resend")
+    async def _stream_add(self, ctx: commands.Context, video_id: str):
+        """ 重新發送通知
+        不管之前是否發送過訊息，當下次偵測的時候，會重新發送通知
+        """
+        token = await self.bot.get_shared_api_tokens(YouTubeStream.token_name)
+        yt_channel_id = await get_video_belong_channel(token, video_id)
+        if yt_channel_id:
+            stream = self.get_stream(yt_channel_id)
+            if stream:
+                if video_id not in stream.livestreams:
+                    stream.livestreams.append(video_id)
+                if video_id in stream.scheduled_sent:
+                    stream.scheduled_sent.remove(video_id)
+                if video_id in stream.streaming_sent:
+                    stream.streaming_sent.remove(video_id)
+                await self.save_streams()
+                await ctx.send(f"`{video_id}` 會再次發送通知")
+            else:
+                await ctx.send(f"沒有設置 `{yt_channel_id}` 的頻道")
+        else:
+            await ctx.send(f"沒有找到 `{video_id}`.")
+
+    @stars.command(name="check")
     #TODO: limit time
     async def _stream_check(self, ctx: commands.Context):
-        """ 
-        
+        """ Force to check the status of all channels and videos
         """
         await self.check_streams()
+        await ctx.send(f"I have checked the status of all channels and videos.")
 
     async def _stream_alerts(self):
         await self.bot.wait_until_ready()
@@ -564,6 +595,12 @@ class StarStream(commands.Cog):
         await self.config.guild(guild).scheduled_message.set(message)
         await ctx.send(_("Stream alert message set!"))
 
+    @message.command(name='collab_mention')
+    async def _message_schduled(self, ctx: commands.Context, *, message: str):
+        guild = ctx.guild
+        await self.config.guild(guild).collab_mention_message.set(message)
+        await ctx.send(_("Stream alert message set!"))
+
     async def check_streams(self):
         # TODO: continue when video in video
         to_remove = []
@@ -598,7 +635,6 @@ class StarStream(commands.Cog):
                     # 沒有預定也沒自動發過預定，先自動正在直播的預定通知
                     if streaming_data:
                         info = YouTubeStream.get_info(streaming_data)
-                        scheduled_stream = self.get_scheduled_stream(info["channel_id"], info["time"], info["video_id"])
                         if stream.chat_channel_id and info["video_id"] not in stream.scheduled_sent:
                             scheduled_data = streaming_data
 
@@ -606,7 +642,11 @@ class StarStream(commands.Cog):
                         info = YouTubeStream.get_info(scheduled_data)
                         video_id = info["video_id"]
                         channel = self.bot.get_channel(stream.chat_channel_id)
-                        scheduled_stream = self.get_scheduled_stream(info["channel_id"], info["time"], info["video_id"])
+                        scheduled_stream = self.get_scheduled_stream(
+                            yt_channel_id=info["channel_id"], 
+                            time=info["time"], 
+                            video_ids=[info["video_id"], ""]
+                        )
                         content = await self.config.guild(channel.guild).scheduled_message()
                         if video_id not in stream.scheduled_sent:
                             if scheduled_stream:
@@ -617,28 +657,38 @@ class StarStream(commands.Cog):
                                     pin=True, content=content, info=info
                                     , scheduled_stream=scheduled_stream
                                 )
-                            elif stream.chat_channel_id:
+                                stream.scheduled_sent.append(video_id)
+                                changed = True
+                            elif not streaming_data and stream.chat_channel_id:
                                 await self.send_scheduled(
                                     stream.chat_channel_id, info=info, pin=True, content=content
                                 )
-                            stream.scheduled_sent.append(video_id)
-                            changed = True
+                                stream.scheduled_sent.append(video_id)
+                                changed = True
                     
                     if streaming_data:
                         info = YouTubeStream.get_info(streaming_data)
-                        scheduled_stream = self.get_scheduled_stream(info["channel_id"], info["time"], info["video_id"])
+                        scheduled_stream = self.get_scheduled_stream(
+                            yt_channel_id=info["channel_id"], 
+                            time=info["time"], 
+                            video_ids=[info["video_id"], ""]
+                        )
                         video_id = YouTubeStream.get_info(streaming_data)["video_id"]
                         if video_id not in stream.streaming_sent:
                             channel = self.bot.get_channel(stream.mention_channel_id)
                             content = await self.config.guild(channel.guild).mention_message()
+                            # 連動直播第一次發開播通知
                             if scheduled_stream and not scheduled_stream.streaming_sent:
+                                collab_mention = await self.config.guild(channel.guild).collab_mention_message()
                                 await self.send_streaming(
                                     streaming_data, stream.mention_channel_id, 
                                     is_mention=True, embed=True, 
                                     chat_channel_id=stream.chat_channel_id, 
                                     content=content,
+                                    collab_mention=collab_mention,
                                     scheduled_stream=scheduled_stream
                                 )
+                            # 一般開播通知
                             elif stream.mention_channel_id:
                                 await self.send_streaming(
                                     streaming_data, stream.mention_channel_id, 
@@ -674,7 +724,7 @@ class StarStream(commands.Cog):
             await self.save_streams()
 
     async def send_streaming(
-        self, data, channel_id, is_mention, content=None
+        self, data, channel_id, is_mention, content=None, collab_mention=None
         , embed=False, description=None, pin=False, chat_channel_id=None, scheduled_stream=None
         ):
         embed = YouTubeStream.make_embed(data) if embed else None
@@ -683,15 +733,21 @@ class StarStream(commands.Cog):
         url = youtube_url_format_2.format(info["video_id"])
         if not content:
             content = "{url}"
-        content = content.replace("{channel_name}", info["channel_name"])
-        content = content.replace("{url}", url)
-        content = content.replace("{description}", description if description else info["title"])
-        content = content.replace("{new_line}", "\n")
-        if chat_channel_id:
-            chat_channel = self.bot.get_channel(chat_channel_id)
-            if chat_channel:
-                content = content.replace("{chat_channel}", chat_channel.mention)
+        def replace_content(content):
+            content = content.replace("{channel_name}", info["channel_name"])
+            content = content.replace("{url}", url)
+            content = content.replace("{description}", description if description else info["title"])
+            content = content.replace("{new_line}", "\n")
+            if chat_channel_id:
+                chat_channel = self.bot.get_channel(chat_channel_id)
+                if chat_channel:
+                    content = content.replace("{chat_channel}", chat_channel.mention)
+            return content
+        content = replace_content(content)
         if scheduled_stream:
+            chat_channel_id = scheduled_stream.text_channel_id
+            if not collab_mention:
+                collab_mention = content
             for channel_id in scheduled_stream.channel_ids:
                 stream = self.get_stream(channel_id)
                 if not stream:
@@ -705,7 +761,9 @@ class StarStream(commands.Cog):
                 mention_str, edited_roles = (await self._get_mention_str(
                     channel.guild, channel, [channel_id]
                 )) if is_mention else ("", [])
-                content_tmp = content.replace("{mention}", mention_str)
+                content_tmp = collab_mention if stream.id != info["channel_id"] else content
+                content_tmp = replace_content(content_tmp)
+                content_tmp = content_tmp.replace("{mention}", mention_str)
                 ms = await self._send_stream_alert(channel, embed, content_tmp)
                 if pin:
                     await ms[0].pin()
@@ -750,6 +808,11 @@ class StarStream(commands.Cog):
                     yt_url = youtube_url_format_2.format(scheduled_stream.video_ids[i])
                     url += f"{scheduled_stream.channel_names[i]}:\n{yt_url}\n"
             content = content.replace("{url}", url)
+
+            # 改頻道名稱
+            emojis = [self.getEmoji(channel, stream.emoji) for stream in self.streams if stream.id in scheduled_stream.channel_ids]
+            emojis = [f'{e}' for e in emojis if e]
+            await channel.edit(name=f"連動頻道{''.join(emojis)}")
         else:
             content = content.replace("{channel_name}", info["channel_name"])
             content = content.replace("{description}", info["title"])
@@ -860,24 +923,34 @@ class StarStream(commands.Cog):
                 return stream
         return None
 
-    def get_scheduled_stream(self, yt_channel_id, time = None, video_id=""):
+    def get_scheduled_stream(self, text_channel_id=None, yt_channel_id=None, video_ids=None, time=None):
         for scheduled_stream in self.scheduled_streams:
-            diff = 0
+            if text_channel_id and text_channel_id != scheduled_stream.text_channel_id:
+                continue
+
+            if yt_channel_id and yt_channel_id not in scheduled_stream.channel_ids:
+                continue
+            elif video_ids:
+                idx = scheduled_stream.channel_ids.index(yt_channel_id)
+                video_id = scheduled_stream.video_ids[idx]
+                if video_id not in video_ids:
+                    continue
+                if video_id != "":
+                    return scheduled_stream
+
             if time:
                 shared_scheduled_time = getTimeStamp(scheduled_stream.get_time())
                 search_scheduled_time = getTimeStamp(time)
                 diff = abs(shared_scheduled_time - search_scheduled_time)
-            if diff < 1800:
-                if yt_channel_id in scheduled_stream.channel_ids:
-                    idx = scheduled_stream.channel_ids.index(yt_channel_id)
-                    if scheduled_stream.video_ids[idx] in ["", video_id]:
-                        return scheduled_stream
+                if not (diff < 1800):
+                    continue 
+            return scheduled_stream
         return None
 
     def getEmoji(self, ctx, in_emoji):
         for e in ctx.guild.emojis:
-                if in_emoji == e.name:
-                    return e
+            if in_emoji == e.name:
+                return e
         if in_emoji in emoji.UNICODE_EMOJI['en']:
             return in_emoji
         return None
