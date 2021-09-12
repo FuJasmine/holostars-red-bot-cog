@@ -1084,15 +1084,19 @@ class StarStream(commands.Cog):
                 if reaction == "Done":
                     command_channel_id = await self.config.guild(message.guild).membership_command_channel_id()
                     role = get(message.guild.roles, id=info["role"])
-                    log.info(str(timedelta(hours=8, seconds=diff)))
                     await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道權限通過，還請確認。\n處理人：{mod.mention}")
-                    ctx = await self.bot.get_context(message)
-                    channel = self.bot.get_channel(command_channel_id)
-                    if not channel:
-                        return
-                    if await self.bot.cog_disabled_in_guild(self, channel.guild):
-                        return
-                    await self.temp_role.add(ctx, channel, message.author, role, timedelta(hours=8, seconds=diff))
+                    
+                    if self.temp_role:
+                        ctx = await self.bot.get_context(message)
+                        channel = self.bot.get_channel(command_channel_id)
+                        if not channel:
+                            return
+                        if await self.bot.cog_disabled_in_guild(self, channel.guild):
+                            return
+                        await self.temp_role.add(ctx, channel, message.author, role, timedelta(hours=8, seconds=diff))
+                    else:
+                        await self.send_message_by_channel_id(command_channel_id, "沒有設置 temp_role bot")
+                        
                     # await self.send_message_by_channel_id(command_channel_id, f"?temprole {message.author.id} {info['date']} {role}")
                     return
                 elif reaction == "Cancel":
