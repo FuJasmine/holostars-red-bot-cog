@@ -11,6 +11,7 @@ from redbot.core.utils.predicates import ReactionPredicate
 from redbot.core.utils.mod import is_mod_or_superior
 from .youtube_stream import YouTubeStream, get_video_belong_channel
 from .scheduled_stream import ScheduledStream
+from .temprole import TempRole
 
 from .errors import (
     APIError,
@@ -31,8 +32,9 @@ import aiohttp
 import contextlib
 from io import BytesIO
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dateutil.parser import parse as parse_time
+from dateutil import relativedelta
 from typing import Optional, List, Tuple, Union, Dict, MutableMapping
 
 _ = Translator("StarStreams", __file__)
@@ -75,11 +77,12 @@ class StarStream(commands.Cog):
         "membership_enable": False,
     }
 
-    def __init__(self, bot: Red):
+    def __init__(self, bot: Red, temp_role: TempRole=None):
         super().__init__()
         self.config: Config = Config.get_conf(self, 27272727)
         self.config.register_global(**self.global_defaults)
         self.config.register_guild(**self.guild_defaults)
+        self.temp_role = temp_role
 
         self.bot: Red = bot
 
@@ -1057,6 +1060,7 @@ class StarStream(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
+        await self.bot.wait_until_ready()
         await self.audit_membership(message)
 
     async def audit_membership(self, message):
@@ -1073,18 +1077,28 @@ class StarStream(commands.Cog):
         text_channel_ids = await self.config.guild(message.guild).membership_membership_text_channel_ids()
         info = get_membership_info(message.content, names, roles, text_channel_ids)
         if info:
-            reaction = await self.send_reaction_check_cross(message)
-            member_channel = self.bot.get_channel(info["text_channel_id"])
-            if reaction == "Done":
-                command_channel_id = await self.config.guild(message.guild).membership_command_channel_id()
-                role = get(message.guild.roles, id=info["role"])
-                user = get(message.guild.roles, id=info["role"])
-                await self.send_message_by_channel_id(command_channel_id, f"?temprole {message.author.id} {info['date']} {role}")
-                await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道權限通過，還請確認。")
-            else:
-                await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道審核權限未通過，還請重新傳送審核資料。")
-        else:
-            await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n會員頻道審核權限未通過，還請重新傳送審核資料。")
+            diff = getTimeStamp(info["date"]) - getTimeStamp(datetime.now())
+            if diff > 0 and diff <= 30*24*60*60:
+                reaction, mod = await self.send_reaction_check_cross(message)
+                member_channel = self.bot.get_channel(info["text_channel_id"])
+                if reaction == "Done":
+                    command_channel_id = await self.config.guild(message.guild).membership_command_channel_id()
+                    role = get(message.guild.roles, id=info["role"])
+                    log.info(str(timedelta(hours=8, seconds=diff)))
+                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道權限通過，還請確認。\n處理人：{mod.mention}")
+                    ctx = await self.bot.get_context(message)
+                    channel = self.bot.get_channel(command_channel_id)
+                    if not channel:
+                        return
+                    if await self.bot.cog_disabled_in_guild(self, channel.guild):
+                        return
+                    await self.temp_role.add(ctx, channel, message.author, role, timedelta(hours=8, seconds=diff))
+                    # await self.send_message_by_channel_id(command_channel_id, f"?temprole {message.author.id} {info['date']} {role}")
+                    return
+                elif reaction == "Cancel":
+                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道審核權限未通過，還請重新傳送審核資料。\n處理人：{mod.mention}")
+                    return
+        await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n會員頻道審核權限未通過，還請重新傳送審核資料。\n此為機器人自動偵測。")
 
     async def send_message_by_channel_id(self, channel_id, msg):
         channel = self.bot.get_channel(channel_id)
@@ -1116,11 +1130,11 @@ class StarStream(commands.Cog):
                 if await is_mod_or_superior(self.bot, u):
                     break
         except asyncio.TimeoutError:
-            return None
+            return None, None
         if task is not None:
             task.cancel()
         await self._clear_react(message, emojis_list)
-        return emojis[r.emoji]
+        return emojis[r.emoji], u
     
 def getTimeType(date_str):
     if date_str == "":
@@ -1157,7 +1171,7 @@ def get_membership_info(messsage, membership_names: List, roles: List, text_chan
                 date = datetime.strptime(value, "%Y/%m/%d")
             except:
                 return None
-            date = date.strftime("%Y/%m/%d %H:%M")
+            # date = date.strftime("%Y/%m/%d %H:%M")
     if date and idx >= 0:
         return {
             "date": date,
