@@ -1060,7 +1060,7 @@ class StarStream(commands.Cog):
         await self.audit_membership(message)
 
     async def audit_membership(self, message):
-        if not self.config:
+        if not self.config or not message or not message.guild:
             return
         if not (await self.config.guild(message.guild).membership_enable()):
             return
