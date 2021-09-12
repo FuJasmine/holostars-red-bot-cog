@@ -1044,6 +1044,7 @@ class StarStream(commands.Cog):
         names = await self.config.guild(guild).membership_membership_names()
         roles = await self.config.guild(guild).membership_membership_roles()
         text_channel_ids = await self.config.guild(guild).membership_membership_text_channel_ids()
+        membership_name = membership_name.lower()
         if membership_name in names:
             idx = names.index(membership_name)
             roles[idx] = role.id
@@ -1053,6 +1054,7 @@ class StarStream(commands.Cog):
             roles.append(role.id)
             text_channel_ids.append(text_channel.id)
             await self.config.guild(guild).membership_membership_names.set(names)
+        names = await self.config.guild(guild).membership_membership_names()
         await self.config.guild(guild).membership_membership_roles.set(roles)
         await self.config.guild(guild).membership_membership_text_channel_ids.set(text_channel_ids)
         
@@ -1077,7 +1079,7 @@ class StarStream(commands.Cog):
         text_channel_ids = await self.config.guild(message.guild).membership_membership_text_channel_ids()
         info = get_membership_info(message.content, names, roles, text_channel_ids)
         if info:
-            diff = getTimeStamp(info["date"]) - getTimeStamp(datetime.now())
+            diff = getTimeStamp(info["date"]) - getTimeStamp(datetime.now(timezone.utc))
             if diff > 0 and diff <= 30*24*60*60:
                 reaction, mod = await self.send_reaction_check_cross(message)
                 member_channel = self.bot.get_channel(info["text_channel_id"])
@@ -1093,7 +1095,7 @@ class StarStream(commands.Cog):
                             return
                         if await self.bot.cog_disabled_in_guild(self, channel.guild):
                             return
-                        await self.temp_role.add(ctx, channel, message.author, role, timedelta(hours=8, seconds=diff))
+                        await self.temp_role.add(ctx, channel, message.author, role, timedelta(seconds=diff))
                     else:
                         await self.send_message_by_channel_id(command_channel_id, "沒有設置 temp_role bot")
                         
