@@ -8,6 +8,7 @@ from redbot.core.utils._internal_utils import send_to_owners_with_prefix_replace
 from redbot.core.utils.chat_formatting import escape, pagify
 from redbot.core.utils.menus import start_adding_reactions
 from redbot.core.utils.predicates import ReactionPredicate
+from redbot.core.utils.mod import is_mod_or_superior
 from .youtube_stream import YouTubeStream, get_video_belong_channel
 from .scheduled_stream import ScheduledStream
 
@@ -21,12 +22,14 @@ from .errors import (
 )
 
 import re
+import json
 import time
 import emoji
 import logging
 import asyncio
 import aiohttp
 import contextlib
+from io import BytesIO
 from collections import defaultdict
 from datetime import datetime, timezone
 from dateutil.parser import parse as parse_time
@@ -47,7 +50,7 @@ class StarStream(commands.Cog):
     """
 
     global_defaults = {
-        "refresh_timer": 60,
+        "refresh_timer": 100000,
         "tokens": {},
         "streams": [],
         "scheduled_streams": [],
@@ -61,6 +64,15 @@ class StarStream(commands.Cog):
         "mention_message": None,
         "scheduled_message": None,
         "collab_mention_message": None,
+
+        # 會員審核
+        "membership_input_channel_id": None,
+        "membership_result_channel_id": None,
+        "membership_command_channel_id": None,
+        "membership_membership_names": [],
+        "membership_membership_roles": [],
+        "membership_membership_text_channel_ids": [],
+        "membership_enable": False,
     }
 
     def __init__(self, bot: Red):
@@ -77,6 +89,7 @@ class StarStream(commands.Cog):
         self._ready_event: asyncio.Event = asyncio.Event()
         self._init_task: asyncio.Task = self.bot.loop.create_task(self.initialize())
         self._youtube_video_re = re.compile(r"https?://(www.youtube.com/watch\?v=|youtube.com/watch\?v=|m.youtube.com/watch\?v=|youtu.be/)([0-9A-Za-z_-]{10}[048AEIMQUYcgkosw])")
+    
     async def red_delete_data_for_user(self, **kwargs):
         """ Nothing to delete """
         return
@@ -122,6 +135,8 @@ class StarStream(commands.Cog):
         pass
 
     @stars.group(name='channel')
+    @commands.guild_only()
+    @checks.mod_or_permissions(manage_channels=True)
     async def _stars_channel(self, ctx: commands.Context):
         """Manage members' channel settings."""
         pass
@@ -321,7 +336,6 @@ class StarStream(commands.Cog):
 
         await ctx.maybe_send_embed(message)
 
-
     @_stars_channel.command(name="mention")
     async def _stars_mention(self, ctx: commands.Context, yt_channel_id_or_name: str, role: discord.Role):
         """Set mention role in each channel
@@ -351,6 +365,8 @@ class StarStream(commands.Cog):
         await self.save_streams()
 
     @stars.group(name="stream")
+    @commands.guild_only()
+    @checks.mod_or_permissions(manage_channels=True)
     async def _stars_stream(self, ctx: commands.Context):
         """Mange stream
         """
@@ -524,8 +540,7 @@ class StarStream(commands.Cog):
         self,
         channel: discord.TextChannel,
         embed: discord.Embed,
-        content: str = None,
-    ):
+        content: str = None):
         if content == None:
             m = await channel.send(
                 None,
@@ -553,8 +568,7 @@ class StarStream(commands.Cog):
         self,
         channel: discord.TextChannel,
         embed: discord.Embed,
-        content: str = None,
-    ):
+        content: str = None):
         if content == None:
             m = await channel.send(
                 None,
@@ -582,6 +596,7 @@ class StarStream(commands.Cog):
 
     @stars.group()
     @commands.guild_only()
+    @checks.mod_or_permissions(manage_channels=True)
     async def message(self, ctx: commands.Context):
         """Manage custom messages for stream alerts."""
         pass
@@ -605,13 +620,24 @@ class StarStream(commands.Cog):
         await ctx.send(_("Stream alert message set!"))
 
     @message.command(name='collab_mention')
-    async def _message_schduled(self, ctx: commands.Context, *, message: str):
+    async def _message_collab_mention(self, ctx: commands.Context, *, message: str):
         guild = ctx.guild
         await self.config.guild(guild).collab_mention_message.set(message)
         await ctx.send(_("Stream alert message set!"))
 
+    @stars.command()
+    @commands.guild_only()
+    @checks.is_owner()
+    async def settings(self, ctx: commands.Context):
+        file_name = "settings"
+        data = json.dumps(await self.config.get_raw()).encode('utf-8')
+        to_write = BytesIO()
+        to_write.write(data)
+        to_write.seek(0)
+        await ctx.send(file=discord.File(to_write, filename=f"{file_name}.txt"))
+        # log.info(await self.config.get_raw())
+
     async def check_streams(self):
-        # TODO: continue when video in video
         to_remove = []
         for stream in self.streams:
             try:
@@ -770,7 +796,7 @@ class StarStream(commands.Cog):
                 mention_str, edited_roles = (await self._get_mention_str(
                     channel.guild, channel, [channel_id]
                 )) if is_mention else ("", [])
-                content_tmp = collab_mention if stream.id != info["channel_id"] else content
+                content_tmp = collab_mention if channel_id != info["channel_id"] else content
                 content_tmp = replace_content(content_tmp)
                 content_tmp = content_tmp.replace("{mention}", mention_str)
                 ms = await self._send_stream_alert(channel, embed, content_tmp)
@@ -868,7 +894,7 @@ class StarStream(commands.Cog):
             role_ids += self.get_stream(ch_id).mention
         role_ids = list(set(role_ids))
         for role_id in role_ids:
-            role =  get(guild.roles, id=role_id)
+            role = get(guild.roles, id=role_id)
             if not can_mention_everyone and can_manage_roles and not role.mentionable:
                 try:
                     await role.edit(mentionable=True)
@@ -964,6 +990,135 @@ class StarStream(commands.Cog):
         if in_emoji in emoji.UNICODE_EMOJI['en']:
             return in_emoji
         return None
+
+    # 會員審核
+    @stars.group(name='membership')
+    @commands.guild_only()
+    @checks.mod_or_permissions(manage_channels=True)
+    async def _stars_membership(self, ctx: commands.Context):
+        """會員審核設定"""
+        pass
+
+    @_stars_membership.command(name='enable')
+    async def _stars_membership_enable(self, ctx: commands.Context):
+        """啟用會員審核功能"""
+        guild = ctx.guild
+        await self.config.guild(guild).membership_enable.set(True)
+        await ctx.send(_("已啟用會員審核"))
+
+    @_stars_membership.command(name='disable')
+    async def _stars_membership_disable(self, ctx: commands.Context):
+        """禁用會員審核功能"""
+        guild = ctx.guild
+        await self.config.guild(guild).membership_enable.set(False)
+        await ctx.send(_("已禁用會員審核"))
+
+    @_stars_membership.command(name='input')
+    async def _stars_membership_input(self, ctx: commands.Context, text_channel: discord.TextChannel=None):
+        """設定使用者輸入會員資料的文字頻道"""
+        guild = ctx.guild
+        await self.config.guild(guild).membership_input_channel_id.set(text_channel.id)
+        await ctx.send(_(f"已設定"))
+
+    @_stars_membership.command(name='result')
+    async def _stars_membership_result(self, ctx: commands.Context, text_channel: discord.TextChannel=None):
+        """設定回覆使用者審核結果的文字頻道"""
+        guild = ctx.guild
+        await self.config.guild(guild).membership_result_channel_id.set(text_channel.id)
+        await ctx.send(_(f"已設定"))
+
+    @_stars_membership.command(name='command')
+    async def _stars_membership_command(self, ctx: commands.Context, text_channel: discord.TextChannel=None):
+        """設定下會員設定指令的文字頻道"""
+        guild = ctx.guild
+        await self.config.guild(guild).membership_command_channel_id.set(text_channel.id)
+        await ctx.send(_(f"已設定"))
+
+    @_stars_membership.command(name='role')
+    async def _stars_membership_role(self, ctx: commands.Context, membership_name: str, role: discord.Role, text_channel: discord.TextChannel):
+        """設定下會員所屬的名字與在頻道內對應的身分組"""
+        guild = ctx.guild
+        names = await self.config.guild(guild).membership_membership_names()
+        roles = await self.config.guild(guild).membership_membership_roles()
+        text_channel_ids = await self.config.guild(guild).membership_membership_text_channel_ids()
+        if membership_name in names:
+            idx = names.index(membership_name)
+            roles[idx] = role.id
+            text_channel_ids[idx] = text_channel.id
+        else:
+            names.append(membership_name)
+            roles.append(role.id)
+            text_channel_ids.append(text_channel.id)
+            await self.config.guild(guild).membership_membership_names.set(names)
+        await self.config.guild(guild).membership_membership_roles.set(roles)
+        await self.config.guild(guild).membership_membership_text_channel_ids.set(text_channel_ids)
+        
+        await ctx.send(_(f"已設定"))
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        await self.audit_membership(message)
+
+    async def audit_membership(self, message):
+        if not (await self.config.guild(message.guild).membership_enable()):
+            return
+        input_channel_id = await self.config.guild(message.guild).membership_input_channel_id()
+        result_channel_id = await self.config.guild(message.guild).membership_result_channel_id()
+        if message.channel.id != input_channel_id:
+            return
+        names = await self.config.guild(message.guild).membership_membership_names()
+        roles = await self.config.guild(message.guild).membership_membership_roles()
+        text_channel_ids = await self.config.guild(message.guild).membership_membership_text_channel_ids()
+        info = get_membership_info(message.content, names, roles, text_channel_ids)
+        if info:
+            reaction = await self.send_reaction_check_cross(message)
+            member_channel = self.bot.get_channel(info["text_channel_id"])
+            if reaction == "Done":
+                command_channel_id = await self.config.guild(message.guild).membership_command_channel_id()
+                role = get(message.guild.roles, id=info["role"])
+                user = get(message.guild.roles, id=info["role"])
+                await self.send_message_by_channel_id(command_channel_id, f"?temprole {message.author.id} {info['date']} {role}")
+                await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道權限通過，還請確認。")
+            else:
+                await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道審核權限未通過，還請重新傳送審核資料。")
+        else:
+            await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n會員頻道審核權限未通過，還請重新傳送審核資料。")
+
+    async def send_message_by_channel_id(self, channel_id, msg):
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+        if await self.bot.cog_disabled_in_guild(self, channel.guild):
+            return
+        await channel.send(msg)
+
+    async def send_reaction_check_cross(self, message):
+        # mods = list(set([role.members for role in await self.bot.get_mod_roles(message.guild)]))
+        emojis = {
+            "\N{WHITE HEAVY CHECK MARK}": "Done", 
+            "\N{NEGATIVE SQUARED CROSS MARK}": "Cancel"
+        }
+        emojis_list = list(emojis.keys())
+        async def add_reaction():
+            with contextlib.suppress(discord.NotFound):
+                for emoji in emojis_list:
+                    await message.add_reaction(emoji)
+        task = asyncio.create_task(add_reaction())
+        try:
+            while True:
+                (r, u) = await self.bot.wait_for(
+                    "reaction_add",
+                    check=ReactionPredicate.with_emojis(emojis_list, message),
+                    timeout=86400 # 1 天
+                )
+                if await is_mod_or_superior(self.bot, u):
+                    break
+        except asyncio.TimeoutError:
+            return None
+        if task is not None:
+            task.cancel()
+        await self._clear_react(message, emojis_list)
+        return emojis[r.emoji]
     
 def getTimeType(date_str):
     if date_str == "":
@@ -981,3 +1136,32 @@ def datetime_plus_8_to_0_isoformat(date):
     timestamp = getTimeStamp(date) + time.timezone
     date = datetime.fromtimestamp(timestamp)
     return date.isoformat()
+
+def get_membership_info(messsage, membership_names: List, roles: List, text_channel_ids: List):
+    date = None
+    idx = -1
+    for s in messsage.split('\n'):
+        tmp = s.split('：')
+        if len(tmp) != 2:
+            return None
+        key, value = tmp
+        if key == "頻道":
+            value = value.lower()
+            if value not in membership_names:
+                return None
+            idx = membership_names.index(value)
+        elif key == "日期":
+            try:
+                date = datetime.strptime(value, "%Y/%m/%d")
+            except:
+                return None
+            date = date.strftime("%Y/%m/%d %H:%M")
+    if date and idx >= 0:
+        return {
+            "date": date,
+            "membership_name": membership_names[idx],
+            "role": roles[idx],
+            "text_channel_id": text_channel_ids[idx],
+        }
+    return None
+
