@@ -1102,7 +1102,7 @@ class StarStream(commands.Cog):
                     # await self.send_message_by_channel_id(command_channel_id, f"?temprole {message.author.id} {info['date']} {role}")
                     return
                 elif reaction == "Cancel":
-                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n❌{member_channel.mention} 會員頻道審核權限未通過，請重新傳送審核資料。\n❓有任何疑問請至 <#863343338933059594>。\n▶️處理人：{mod.mention}")
+                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道審核權限未通過，請重新傳送審核資料。\n❓有任何疑問請至 <#863343338933059594>。\n▶️處理人：{mod.mention}")
                     return
         await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n❌會員頻道審核權限未通過，請重新傳送審核資料。\n❓有任何疑問請至 <#863343338933059594>。\n▶️此為機器人自動偵測。")
 
