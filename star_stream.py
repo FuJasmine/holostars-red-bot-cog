@@ -1086,7 +1086,7 @@ class StarStream(commands.Cog):
                 if reaction == "Done":
                     command_channel_id = await self.config.guild(message.guild).membership_command_channel_id()
                     role = get(message.guild.roles, id=info["role"])
-                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道權限通過，還請確認。\n處理人：{mod.mention}")
+                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} ✅會員頻道權限通過，請確認。\n▶️處理人：{mod.mention}")
                     
                     if self.temp_role:
                         ctx = await self.bot.get_context(message)
@@ -1102,9 +1102,9 @@ class StarStream(commands.Cog):
                     # await self.send_message_by_channel_id(command_channel_id, f"?temprole {message.author.id} {info['date']} {role}")
                     return
                 elif reaction == "Cancel":
-                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n{member_channel.mention} 會員頻道審核權限未通過，還請重新傳送審核資料。\n處理人：{mod.mention}")
+                    await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n❌{member_channel.mention} 會員頻道審核權限未通過，請重新傳送審核資料。\n❓有任何疑問請至 <#863343338933059594>。\n▶️處理人：{mod.mention}")
                     return
-        await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n會員頻道審核權限未通過，還請重新傳送審核資料。\n此為機器人自動偵測。")
+        await self.send_message_by_channel_id(result_channel_id, f"{message.author.mention}\n❌會員頻道審核權限未通過，請重新傳送審核資料。\n❓有任何疑問請至 <#863343338933059594>。\n▶️此為機器人自動偵測。")
 
     async def send_message_by_channel_id(self, channel_id, msg):
         channel = self.bot.get_channel(channel_id)
